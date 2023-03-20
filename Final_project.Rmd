@@ -1,0 +1,516 @@
+---
+title: "Visual Stimuli and Perceptual Decision-Making: A Study of Neuron Firing Patterns in the Visual Cortex"
+subtitle: "Wentao Guo 917786611"
+output:
+  rmdformats::robobook
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  comment = "##",
+  R.options = list(width = 60)
+)
+```
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(gapminder)
+library(ggpubr)
+library(gplots)
+library(ggridges)
+library(ggResidpanel)
+library(rmdformats)
+library(lmerTest)
+setwd("~/Desktop/UCD/study_material/STA/2023_W_207/207_final")
+```
+
+
+# Abstract 
+
+In this project, we analyze a subset of data (5 in 39 sessions) from Steinmetz et al. (2019) on the neural activity of mice during visual decision-making tasks. We used data from five sessions of two mice to study the spike trains of neurons in the visual cortex during stimuli onset to 0.4 seconds post-onset. The analysis employs a mixed two-way ANOVA to reveal the effects of contrast level on neural activity, providing insights into the neural mechanisms of visual perception and decision-making in mice. In addition, we are able to give predictions on the decision feedback outcomes from visual stimuli, and neuron mean firing rates based on a classification model. The study contributes to our understanding of how the visual cortex and processes visual stimuli as well as decision-making.
+
+# Introduction
+
+How do we make decisions based on what we see? This question has intrigued researchers for decades as they have tried to understand the neural mechanisms underlying perceptual decision-making. As a fundamental cognitive function, it allows us to interact with the external world based on sensory inputs. The whole cognitive activity involves collecting, interpreting, and integrating sensory information to produce appropriate actions based on the in-time decision.[1-2] Interestingly, except for sensory evidence, other factors, such as prior knowledge, attention, motivation, and memory, can also influence the decision-making process. Understanding how these factors shape perceptual decisions and how they are implemented in the brain is a significant challenge for neuroscience research. In this work, we highlight the impact of visual behavior to study how stimuli activate the neurons by revisiting a fraction of data from Steinmetz’s experiment.[3] Here, we ask several questions:
+
+1. What are the patterns and relationships within the data in interest?
+2. In what way of neuron firing do the neurons in the visual cortex react to the visual stimuli presented on the left and right? 
+3. Can we use a classification model to predict the feedback decision from the visual stimulus pattern and neuron firing rate at the first 0.4 seconds?
+
+# Background 
+
+In the study by Steinmetz et al. (2019), the authors investigated how neurons in the visual cortex encode perceptual decisions in mice. The experiments involved a total of 10 mice (five male and five female) and were conducted over 39 sessions spanning several weeks. In each session, the mice were head-fixed and placed on a spherical treadmill with two monitors facing them on either side. The mice were presented with several hundred trials per session, during which visual stimuli consisting of drifting gratings were randomly presented on one or both monitors for 0.25 seconds. The contrast levels of the stimuli varied across four levels: {0, 0.25, 0.5, 1}, where 0 indicated a blank screen with no stimulus. The mice reported their decisions using a wheel controlled by their forepaws: turning the wheel to the left indicated that they perceived a stimulus on the left monitor, turning it to the right showed that they perceived a stimulus on the right monitor, and not turning it indicated that they perceived no stimulus on either monitor. The mice were rewarded with water drops and penalized with white noise for incorrect choices. The activity of neurons in different brain regions was recorded during the trials using Neuropixels probes, which provided high-density extracellular recordings of spike trains from thousands of neurons simultaneously. 
+The data used in this study is a subset of the original data available at https://figshare.com/articles/steinmetz/9598406, focusing only on the spike trains of neurons in the primary visual cortex from stimulus onset to 0.4 seconds after stimulus onset, using five sessions from two mice (one male and one female).
+
+# Descriptive analysis 
+
+
+```{r  warning=FALSE, include=FALSE}
+session=list()
+for(i in 1:5){
+  session[[i]]<-readRDS(paste('~/Desktop/UCD/study_material/STA/2023_W_207/207_final/session',i,'.rds',sep=''))
+}
+anodata <- read.csv('~/Desktop/UCD/study_material/STA/2023_W_207/207_final/all_ANOVA.csv')
+tdata <- read.csv('time.csv')
+```
+
+```{r warning=FALSE, include=FALSE}
+# construct the data frame for session 1, should include session ID, left, right, average rate
+dfall = data.frame(var1="session",var2="left_contrast",var3="right_contrast",var4="frate",var5="feedback")[-1,]
+for(ID in 1:5){
+  t=0.4 # from Background 
+  ds = numeric()  
+  n.trials=length(session[[ID]]$spks)
+  n.neurons=dim(session[[ID]]$spks[[1]])[1]
+  # Obtain the firing rate 
+  frate=numeric(n.trials)
+  for(i in 1:n.trials){
+    frate[i]=sum(session[[ID]]$spks[[i]])/t/n.neurons
+  }
+  dfall <- rbind(dfall,data.frame(matrix(rep(ID,length(session[[ID]]$spks))),session[[ID]]$contrast_left,session[[ID]]$contrast_right,frate,session[[ID]]$feedback_type))
+}  
+#write.csv(dfall,file = "prediction.csv")
+names(dfall) = c("session","left","right","frate")
+
+dfall$session = as.factor(dfall$session)
+dfall$left = as.factor(dfall$left)
+dfall$right = as.factor(dfall$right)
+```
+
+We first examine the data structure thoroughly, emphasizing the variables: Left contrasts, right contrasts, and sessions.
+	
+Each session contains unique background: the name of the experimental `mouse`, the experiment `date`, and the experiment data. More detailed information includes: 1) the contrast levels of stimuli from the left side (`contrast_left`); 2) the contrast levels of stimuli from the right side (`contrast_right`) side; 3) The positive/negative decision results (`feedback_type`); 4) The time bin for each neuron firing detection (`time`); 5) numbers of spikes of neurons (`spks`) in time bins. 
+
+The number of visual stimuli and the number of neurons in detection in each session are summarized in the following table: 
+
+
+| Session      | Mouse      | Date       | Num of neuron | Num of stimulus |
+|-------------:|:-----------|------------|:-------------:|:---------------:|
+|   1          |  Cori      |2016-12-14  |     178       |     214         |
+|   2          |  Cori      |2016-12-17  |     533       |     251         |
+|   3          |  Cori      |2016-12-18  |     228       |     228         |
+|   4          |  Forssmann |2017-11-01  |     120       |     249         |
+|   5          |  Forssmann |2017-11-02  |     99        |     254         |
+<center> **Table1**: Summary of data set sourced from Steinmetz’s experiment </center>
+
+<br/> 
+
+The `spks` record spikes data in 39-time bins for every neuron in the session at each trial. To better describe the outcome, which is the sensitivity of visual neurons in the cortex, we used the mean firing rate `frate` that has several advantages in analyzing neural data. The reasons are described as follows:
+
+1. Mean firing rate reduces the dimensional of the data, making it more manageable and easier to analyze. The data possesses a lot of 0 that do not contain useful information in the scope of our study. 
+2. The averaged data provides a quantitative measure of the activity of a group of neurons, which can be compared across different trials or conditions. As we have observed in the above table that the number of neurons in each session is quite different. 
+3. We are able to remove some of the noise and variability in the data by averaging out the spiking activity across multiple neurons. 
+4. Mean firing rate not only reflects the overall activity of a group of neurons but also over a specific time interval. In the experiment, the response in 0.4 seconds was recorded. Thus we average the firing rate during the time period as well.
+
+The Mean firing rate `frate` can be calculated by:
+
+<center>
+$\frac{\text{Total number of spikes in a given time period}}{\text{Number of neurons}*\text{Length of the time period in seconds}}$
+</center>
+
+<br/> 
+As all `spks` data in each trials have the same time length and numbers of bins, we take the 0.4 second as the time unit, then the `frate` can be written as:
+
+<center>
+$\frac{\text{Total number of spikes in 0.4 second}}{\text{Number of neurons}}$
+</center>
+
+<br/> 
+
+To better understand the experimental design and data collected, we visualize the distribution of left, and right contrast levels from session 1 to session 5. The trials can be classified into 16 types of experiments according to the left-right combined level (4 levels on the left and 4 levels on the right).  Visualization of left/right The 2D scatter plot shows that 5 sessions share the homogeneous trial type arrangement: most of the trials are designed with no signals at both sides (See **Figure1**, **Figure2** and **Table2**). The histogram of the trial design agrees that no dramatic difference between each session from the perspective of visual contrasts. Therefore, we examine the necessity of treating session as factors in our statistic model. Interestingly, it is supported by the observation that the firing rates in distinct sessions do not share similar patterns, as we will discuss below. 
+
+```{r  echo=FALSE}
+par(mfrow=c(2,5))
+for (i in 1:5){
+  hist(session[[i]]$contrast_left,main=paste('session',i,sep=''),
+xlab="stimuli level (left)")
+  hist(session[[i]]$contrast_right,main=paste('session',i,sep=''),
+xlab="stimuli level (right)")
+#  hist(session[[i]]$spks)
+}
+```
+<center>
+**Figure 1 **: Distribution of left and right stimuli level in each sessions
+</center>
+
+<br/> 
+
+```{r, echo=FALSE}
+c <- ggplot(dfall, aes(x = left, y = right, color = session, alpha=0.9)) +
+  labs(x = "left contrast", y = "right contrast") +
+  theme(legend.title = element_blank())+geom_jitter(height=0.3,width=0.3)
+ggplotly(c)
+```
+
+<center>
+**Figure 2**. Scatter representation of left and right contrast level in each sessions. Points from different sessions are labeled with distinc colors and shapes.
+</center>
+
+<br/> 
+
+| levels       | 0       | 0.25    |   0.5      |     1.0       |
+|-------------:|:--------|---------|:----------:|:-------------:|
+|   0          |  327    |   50    |   84       |     130       |
+|   0.25       |  33     |   30    |   40       |     86        |
+|   0.5        |  83     |   40    |   32       |     37        |
+|   1.0        |  79     |   75    |   36       |     34        |
+
+<center>
+**Table 2**. Summary of numbers of left/right contrast levels combination in all sessions.
+</center>
+
+<br/> 
+```{r, echo=FALSE}
+neuron_list <- list()
+for(Session_ID in 1:5)
+{
+  n.trials=length(session[[Session_ID]]$spks) 
+  n.neurons=dim(session[[Session_ID]]$spks[[1]])[1] 
+  number_of_time=dim(session[[Session_ID]]$spks[[1]])[2] 
+
+
+  # initiate the time reduced matrix---the number of spikes of each neuron in each trial was summed by time, in the matrix row correspond to different trial, column refers to different neuron
+  sum_spks_neuron <- matrix(0,nrow =n.trials,ncol=n.neurons)
+
+  for(i in seq(1,n.trials))
+    sum_spks_neuron[i,]=rowSums(session[[Session_ID]]$spks[[i]])/0.4 # sum up time
+
+  data <- data.frame(value=colSums(sum_spks_neuron)/n.trials)
+  neuron_list[[Session_ID]] <- data
+#  file_name1 <- paste("time_reduced_session", Session_ID, ".csv", sep = "")
+#  file_name2 <- paste("time_reduced_session_agg", Session_ID, ".csv", sep = "")
+  temp = as.data.frame(cbind(session[[Session_ID]]$contrast_left,session[[Session_ID]]$contrast_right,sum_spks_neuron))
+  agg_temp = aggregate(temp, by=list(type=temp$V1,temp$V2), mean,simplify = TRUE, drop = TRUE)
+
+
+#  write.csv(temp,file = file_name1)
+#  write.csv(agg_temp,file = file_name2)
+}
+
+```
+
+The density plot **Figure3** of firing rate within 5 sessions reveals the non-trivial various characteristics. Though sessions share a similar bell-shaped distribution with small lumps, the spreads, height, and median location are fairly different. From sessions 1 to 5, the peak's middle slightly shifts from a higher firing rate to a lower one. Besides, the height of sessions 1 and 3 are much lower compared to 2, 4, and 5, indicating a larger variability. The overlap of firing rate distribution from different sessions is too low to conclude that the neuron’s performances in sessions 1 to 5 are indistinguishable, especially when the stimulus is quite consistent among sessions, as we have concluded before. The evaluation of firing rate diversity (whether it is from leftcontrast, right contrast, or both, or neither) in **Figure4** indicates that the trend is observed in both left and right contrast. Thus, we can conclude that it is necessary to take sessions into account as an influential factor. Each session can be considered a random sample from a larger population of potential sessions that could be conducted in the future. Therefore, it is rational to treat the session as a random effect in the statistical model, as the goal is not to make inferences about the specific sessions in the study, but rather to generalize to a larger population of potential sessions. 
+
+```{r, echo=FALSE}
+p <- ggplot(data = dfall,
+    mapping = aes(
+      x = frate, 
+      color = session,
+      fill = session))
+p <- p + geom_density(alpha = 0.5)
+ggplotly(p)
+```
+
+<center>
+**Figure 3**. The distribution of firing rates density in 5 sessions. 
+</center>
+<br/> 
+
+```{r}
+
+dfall$session = as.factor(dfall$session)
+a <- ggplot(dfall, aes(x = left, y = frate, color = session, alpha=0.5)) +
+  labs(x = "Left_contrast", y = "`mean firing rate`") + geom_jitter()
+b <- ggplot(dfall, aes(x = right, y = frate, color = session, alpha=0.5)) +
+  labs(x = "Right_contrast", y = "`mean firing rate`") +
+  geom_jitter()
+subplot(a, b, nrows = 2,widths=0.8)
+
+```
+
+<center>
+**Figure 4**. Scatter plot of firing rates in 5 sessions under different levels of left and right contrast. Top: firing rate versus left contrast. Bottom: firing rate versus right contrast
+</center>
+
+<br/> 
+
+Next, we focus on the left and right contrast level to justify the importance and necessity of treating them as two factors that affect the mean firing rate. Though neither of the above studies indicates that the left and right contrast gives dissimilar results on mean firing rate, we still suspect that there might be a positive or negative correlation between the `contrast_left`, `contrast_right` level and `frate`. Thus, we implement the main effect plot to visualize the effect of left contrast and right contrast level on the mean firing rate separately while holding other variables constant. The **Figure 5** displays the mean response of each level of the contrast, revealing that the correlation between firing rate and contrast does not follow a simple positive or negative impact, and the trend between left and right are mismatched. Key observations from the main effect figures are summarized below.
+No steady increase, decrease, or flat trend in `frate` was visualized as stimulus contrast levels increased. 
+
+When the right contrast level increases from 0.25 to 1.0, the mean firing rate boosts steadily, while for the left, the curve is bent at 0.5 contrast level. Though we would expect a low firing rate to occur when no stimulus on either side, both curves suggest that the weakest neuron firing tendency happens at the level of 0.25. Meanwhile, A much larger variability come out in the left contrast main effect graph.
+
+```{r, echo=FALSE}
+
+par(mfrow=c(1,2))
+
+
+plotmeans(frate ~ left, data = dfall, 
+          xlab = "contrast level (left)", ylab = "`mean firing rate`",
+          main="Main effect graph")
+plotmeans(frate ~ right, data = dfall, 
+          xlab = "contrast level (right)", ylab = "`mean firing rate`",
+          main="Main effect graph", n.label=FALSE)
+```
+
+
+<center>
+**Figure 5**. Main effect plots. 
+</center>
+<br/>
+
+```{r}
+dfall$left=as.numeric(dfall$left)
+dfall$right=as.numeric(dfall$right)
+plot_ly(x=dfall$left, y=dfall$right, z=dfall$frate, type="scatter3d", mode="markers", color=dfall$frate)
+```
+<center>
+**Figure 6**. 3D scatter plot of `contrast_left`, `contrast_right` and `frate`
+</center>
+<br/> 
+
+To display the firing rate under the influence of both left and right contrast, we construct a 3D scatter plot **Figure6** as shown above. Among all the trials, there is no conspicuous correlation between the visual stimulus strength within 16 designs and the `frate`. Therefore, it is logical to treat the contrast levels as categorical variables instead of numerical values due to the discreteness and variability beyond numerical properties. Since designs represent distinct categories, they should be taken as factors to independently estimate each contrast level's effect.
+
+```{r, echo=FALSE}
+neuron_data <- data.frame(dens=c(neuron_list[[1]]$value,neuron_list[[2]]$value,neuron_list[[3]]$value,neuron_list[[4]]$value,neuron_list[[5]]$value),lines <- rep(c("Session 1","Session 2","Session 3","Session 4","Session 5"),c(178,533,228,120,99)))
+
+hist_plot <- ggplot(neuron_data, aes(x = dens, fill = lines),color=session) + geom_density(alpha = 0.4,position="identity")+xlab("Distribution of Neurons' `mean firing rate` in sessions")
+
+hist_plot
+```
+
+<center>
+**Figure 7**. Density plot of neurons firing rate in sessions
+</center>
+<br/> 
+
+Now that we have examined the three variables that we are interested in: sessions, left contrast level, and right contrast level, we trace back to explore the robustness and reliability of averaging out neurons in each trial. First, the `frate` in each trial is broken down based on the neurons, followed by the aggregation of the trials to study the neuron activities. As shown in the density **Figure7**, the neuron firing activity from different sessions follows a similar bell-shaped distribution, that most of the neurons are clustering around 0-2.5 `mean firing rate` while a long tail spans from 2.5 to 15. Individual neurons often exhibit a high degree of variability in their response to stimuli due to intrinsic noise and their objective attributes. Therefore, it is improper to group up all neurons and average all of them in each trial. Using `Kmean` method, we group together neurons that exhibit similar activity patterns in response to different levels of visual stimuli contrast.[4] After that, we perform principal component analysis (PCA) to qualitatively visualize the identify patterns of neurons and justify if the clustering result is perceptive using `sklearn` package.[5] To make the neuron groups comparable in our model study, the cluster method takes all neurons regardless of their sessions. If we are to cluster neurons separately by session, we may miss the opportunity to identify consistent patterns across all sessions and may not get a complete picture of the neural activity in response to visual stimuli contrast.
+
+As we have shown in **Figure8**, the neurons smear out in the space of PCA1 and PCA2. The clustering analysis with 2, 3, or 4 groups are conducted to explore the possible number of clusters or groups that best represent the variability in the neurons. In this case, the PCA plot revreals the three distinct patterns of variability in the data, which suggests that clustering into three groups is the best option. 
+
+<center>
+![](/Users/lele/Desktop/UCD/study_material/STA/2023_W_207/207_final/PCA.png)
+</center>
+
+<center>
+**Figure 8**. PCA plot. 
+</center>
+<br/> 
+
+Therefore, we organize the neurons into three groups: `cluster1` (low firing rate); `cluster2` (high firing rate) and `cluster3` (medium firing rate).
+
+# Inferencial Analysis
+
+Established on our study on the whole data structure, we use a mixed effect model with `lmer`, where left and right contrast level are fixed-effect factors and sessions are taken as a random factor. The first question drove us to test whether there is an interaction effect between the two factors.
+
+The non-interaction and interaction two way ANOVA model can be expressed as:
+
+Full model:
+<center>
+$Y_{ijk} = \mu_{...} + \alpha_i + \beta_j +(\alpha\beta)_{ij} + \gamma_{k} + \epsilon_{ijkl} \ \ \ i=1,2,3,4 \ \ j=1,2,3,4 \ \ k = 1,...5$</center>
+<br/>
+
+Reduced model:
+<center>
+$Y_{ij} = \mu_{...} + \alpha_i + \beta_j + \gamma_{k} + \epsilon_{ijkl} \ \ \ i=1,2,3,4 \ \ j=1,2,3,4 \ \ k = 1,...5$</center>
+<br/>
+
+In the above models, we treat the error term as i.i.d ~ $N(0,\sigma^2)$. `$\alpha_i$` represents the four levels of left visual contrast: 0, 0.25, 0.5 and 1. `$\beta_j$` represents the four levels of right visual contrast: 0, 0.25, 0.5 and 1. `$(\alpha\beta)_{ij}$` corresponds to the interaction effect of left and right contrast. The random term `$\gamma_k$` is the term describes the distinct session from 1 to 5.The 3 clusters of neurons are studied separately, using three parallel models, each taking one of the three clusters and have a reduced non-interacting model and a full interacting model. 
+
+The ANOVA analysis shows that for all three clusters, there is no significant interaction between the left and right contrast, which suggests that the effect of left contrast level on `mean firing rate` is similar across different levels of right contrast level, and vice versa. Thus, the two factors impact the `frate` are independent, we cannot accept a combined effect due to their interaction under the significant level of 0.05.
+
+```{r, include=FALSE}
+library(lme4)
+anodata$left <- as.factor(anodata$left)
+anodata$right <- as.factor(anodata$right)
+anodata$session <- as.factor(anodata$session)
+summary(anodata)
+```
+
+```{r, include=FALSE}
+fit1 <- lmer(frate0 ~ (1 | session) + left + right  , data = anodata)
+fit2 <- lmer(frate1 ~ (1 | session) + left + right  , data = anodata)
+fit3 <- lmer(frate2 ~ (1 | session) + left + right  , data = anodata)
+fit4 <- lmer(frate ~ (1 | session) + left + right  , data = dfall)
+fit1int <- lmer(frate0 ~ (1 | session) + left + right + left*right , data = anodata)
+fit2int <- lmer(frate1 ~ (1 | session) + left + right + left*right , data = anodata)
+fit3int <- lmer(frate2 ~ (1 | session) + left + right + left*right , data = anodata)
+anova(fit1,fit1int)
+anova(fit2,fit2int)
+anova(fit3,fit3int)
+```
+<br/> 
+
+| group       | p-value       | AIC (full)    |   AIC (reduce)      | BIC (full)    |   BIC (reduce)      |
+|-------------:|:--------|---------|:----------:|:-------------:|:-------------:|
+|   1 (low)         |  0.3989    |   -990.56    |  -999.14        |     -899.006       | -953.36 |
+|   2 (high)      |  0.1431     |   5121.1    |   5116.6       |    -2542.6        |-2549.3|
+|   3 (medium)       |  0.2515     |   2662.4    |   2655.7       |    2753.9        |2701.5|
+<center>
+**Table 3**. Summary of ANOVA results of 3 neuron clusters.
+</center>
+<br/>
+
+It is also shown in **Table3** that all reduced models have a lower AIC and BIC comparing to the full model. Thus, we exclude the interaction term in our regression model.
+
+
+# Sensitivity Analysis
+To test the validity of model assumptions, we conduct model diagnostic to examine the residuals and attempted to use sensitive analysis to test whether sessions should be taken as random effect.
+
+The **Figure9** contains the fitted value v.s. Residuals and Q-Q plots for the three models independently. The mean residual is 0, and residuals are not dependent on the fitted value, suggesting that the assumption that the relationship is linear is reasonable. The Q-Q plot shows that the normal distribution is tailed and right-skewed with outlier at the corner. To test the normality of residuals, we perform Shapiro-Wilk test on the three models. The p-values are smaller than $1e-8$, indicating that the normality assumption is not valid. The Levene's test also suggests that the homogeneity of variance is violated with p-values smaller than 0.05 for all models. However, the histogram of residuals in three models all displays a normal distribution as shown in **Figure10**.
+
+```{r}
+resid_compare(models = list(fit1, 
+                            fit2, 
+                            fit3),
+              plots = c("resid", "qq"),
+              smoother = TRUE,
+              qqbands = TRUE,
+              title.opt = FALSE)
+```
+<center>
+**Figure 9**. Model diagnostics. Top: Residual plots of cluster1 (left), cluster2 (middle), and cluster3 (right); Bottom: Q-Q plots of cluster1 (left), cluster2 (middle), and cluster3
+</center>
+<br/>
+
+```{r include=FALSE}
+r1 <- residuals(object = fit1)
+shapiro.test(x = r1)
+r2 <- residuals(object = fit2)
+shapiro.test(x = r2)
+r3 <- residuals(object = fit3)
+shapiro.test(x = r3)
+```
+
+```{r}
+par(mfrow=c(1,3))
+hist(r1,main="residuals in fit1",xlabel="residual")
+hist(r2,main="residuals in fit2",xlabel="residual")
+hist(r3,main="residuals in fit3",xlabel="residual")
+```
+<center>
+**Figure 10**. Histograms of residuals from cluster1 (left), cluster2 (middle), and cluster3 (right)
+</center>
+<br/>
+
+Levene's test:
+<center>
+$$H_0: \sigma_{1}^2 = \sigma_{2}^2 = ...\sigma_{n}^2$$
+$H_1: \sigma_{i}^2 \neq \sigma_{j}^2$
+
+</center>
+<br/>
+
+```{r include=FALSE}
+library(car)
+leveneTest(frate0 ~ left*right,data=anodata)
+leveneTest(frate1 ~ left*right,data=anodata)
+leveneTest(frate2 ~ left*right,data=anodata)
+```
+
+For a mixed-effect model, we would like to check whether there is a mixed-effect for session factor with another set of full model and reduced model:
+
+<center>
+$$H_0: \sigma_{\alpha}^2 = 0$$
+$H_1: \sigma_{\alpha}^2 \neq 0$
+</center>
+<br/>
+
+Full model:
+<center>
+$Y_{ijk} = \mu_{...} + \alpha_i + \beta_j +(\alpha\beta)_{ij} + \gamma_{k} + \epsilon_{ijkl} \ \ \ i=1,2,3,4 \ \ j=1,2,3,4 \ \ k = 1,...5$</center>
+<br/>
+
+Reduced model:
+<center>
+$Y_{ij} = \mu_{..} + \alpha_i + \beta_j +\epsilon_{ijkl} \ \ \ i=1,2,3,4 \ \ j=1,2,3,4 \ \ k = 1,...5$</center>
+<br/>
+
+The test `anova` statistic in the three models results in P-values of 4.391e-05, 0.0001865 and 0.0004216 in the three models, suggesting that we should reject the null hypothesis that there is no random effect of session at 0.05 significance level.
+
+```{r include=FALSE}
+fit1fix <- lm(frate0 ~ session + left +right , data = anodata)
+fit2fix <- lm(frate1 ~ session + left +right , data = anodata)
+fit3fix <- lm(frate2 ~ session + left +right , data = anodata)
+
+anova(fit1,fit1fix)
+anova(fit2,fit2fix)
+anova(fit3,fit3fix)
+
+```
+
+However, considering the purpose of our model, taking sessions as a random effect is still necessary to to account for the fact that sessions are not identical to each other. By treating sessions as a random effect in the later inference analysis, the model can account for potential variation in neuronal activity across different sessions due to unmeasured factors, such as the mice’s substantive identity, that vary across sessions.
+
+# Prediction
+To Answer the second question: Can we use a classification model to predict the feedback from the pattern of the visual stimulus (`left_contrast`, `right_contrast`) and neuron’s responses (`frate`)? We used a classification model to predict whether the feedback will be positive `true` or negative `false` based on the pattern of the visual stimulus and mean firing rate at first 0.4 seconds. 
+
+
+The feedback is recorded as a factorial variable with two labels: correct (1) and incorrect (-1). The bar plot (**Figure 11**) shows that the positive rate among the five sessions is very similar. Combining our previous conclusion that the visual stimuli patterns in distinct sessions are close, we conclude that the data from five sessions can be merged together to build the prediction model. Besides, aiming to get a prediction model that can universally estimate the outcome of mouses’ decision-making process, we consider the variability among sessions as noise.
+
+```{r}
+names(tdata) = c("trial","session","left","right","frate","feedback")
+tdata$session <- as.factor(tdata$session)
+tdata$feedback <- as.factor(tdata$feedback)
+feedback <- ggplot(tdata, aes(x=feedback, color=session,fill=session))+geom_bar(position = "dodge")
+ggplotly(feedback)
+```
+
+<center>
+**Figure 11**. Feedback type in different sessions
+</center>
+<br/>
+
+The model is trained on the data from session 1 to 5 except for the top 100 data in session one, which are chosen as the test set. The inputs are the `left_contrast`, `right_contrast`, and `frate`, and the output is the corresponding feedback type 1/-1. To measure the accuracy of our classification model, we calculate the true positive rate (TPR) and false positive rate (FPR) at various threshold values and then plotted the AUC-ROC curve at each threshold value, integrated the area under the curve as shown in **figure 12**.[6] Below, the left figure is the result of SVM estimator while the right side corresponds to the logistic regression estimator. To find the optimal threshold, we compute the gmean for each threshold value to choose the optimal threshold. The gmean was calculated as follows: 
+
+<center>
+$$gmean = \sqrt{Recall * Specificity}= \sqrt{TPR*\frac{TN}{FP+TN}} = \sqrt{TPR*(1-FPR)}$$
+</center>
+<br/>
+
+<center>
+![](/Users/lele/Desktop/UCD/study_material/STA/2023_W_207/207_final/Picture1.png)</center>
+<center>**Figure 12**. AUC-ROC plot of classification model from different methods. Optimal threshold given by gmean is shown in the right side graph. Top: SVM; Middle: logistic regression; Bottom: random forest.</center>
+<br/>
+
+As shown in **Figure12**, we explore three different methods to derive the best classification model. The learning process is tuned with hyperparameters to give the optimal AUC integration result. The random forest model stands out among other methods with an AUC value of 0.74. Using gmean algorithm, we get the optimal 0.786459 threshold with a 0.724 gmean value. Under this condition, the model was trained with $accuracy=0.74$,$specificity=0.692308$ and $sensitivity=0.757$.
+
+
+# Conclusion and Disucssion
+In this study, we start by analyzing the data from session1 to 5 extracted from Steinmetz’s experiment to investigate the left and right stimuli’s effect on the mouse’s neuron firing rate, as well as train a classification model to predict the decision-making results from the `left_contrast` and `right_contrast` level and neuron activities `frate`. No interaction effect was observed in the mixed-effect ANOVA model, indicating that the neurons’ firing property is an additive outcome from left and right visual stimulus independently. This statement is valuable in understanding the neural mechanisms underlying visual perception to help researchers better model and predict neuronal responses to different sensory inputs. In the following study on decision-making classification, we successfully establish a model to predict the outcomes from the visual stimulus information and the firing rate of neurons from the visual cortex with an accuracy of 0.74 This reveals the inherent correlation that connects cognitive activity from integrating sensory information to producing appropriate actions based on the decision-making process. It is surprising that even with a time window of 0.4 seconds, which is much shorter than a full cycle of neuron activity involved in generating feedback, we are still able to accurately predict decisions based on instinct visual neuron firing activities. 
+
+```{r}
+a1 <- ggplot(tdata, aes(x = trial, y = frate, color=session, alpha=0.7)) +
+  labs(x = "trial", y = "`mean firing rate`") +  geom_point()+ geom_smooth()
+ggplotly(a1)
+tdata$feedback <- as.numeric(tdata$feedback)
+
+```
+<center>**Figure 13**. `mean firing rate` along trials in sessions.
+
+</center>
+<br/>
+
+```{r}
+a2 <- ggplot(tdata, aes(x = trial, y = feedback, color=session, alpha=0.7)) +
+  labs(x = "trial", y = "`mean firing rate`") + geom_smooth()+geom_jitter(height=0.1)
+ggplotly(a2)
+```
+<center>**Figure 14**. feedback result along trials in sessions.
+
+</center>
+<br/>
+
+To discover the trend of mouse's feedback performance along the trials and to see if there is any reinforcement of neuron activity and decision-making during each session. We plot the scatter plot and fitted a smoothed line to visualize the firing rate and feedback outcomes. Figure 13 shows that the firing rate decreases slowly as the mouse is tested for a longer time. Interestingly, though we would expect a higher rate of making “correct” decisions after the reward/punishment processes, the mouse in all five sessions makes more mistakes after the 150 trials, as shown in figure 14. 
+
+Therefore, more interesting aspects of neuron activities and decision-making mechanistic studies can be implemented and analyzed with the help of statistical models using the whole set of experiment data with 39 sessions.  
+
+# Aknowledgement
+
+Wentao would like to thank Dawei Wang and Dongjie Chen for their kindly help and discussion on the whole project.
+
+# References
+1. Grill-Spector, Kalanit, and Rafael Malach. "The human visual cortex." Annu. Rev. Neurosci. 27 (2004): 649-677.
+2. Jacobs, Elina AK, et al. "Cortical state fluctuations during sensory decision making." Current Biology 30.24 (2020): 4944-4955.
+3. Steinmetz, Nicholas A., et al. "Distributed coding of choice, action and engagement across the mouse brain." Nature 576.7786 (2019): 266-273.
+4. Lloyd, Stuart. "Least squares quantization in PCM." IEEE transactions on information theory 28.2 (1982): 129-137.
+5. Pedregosa, Fabian, et al. "Scikit-learn: Machine learning in Python." the Journal of machine Learning research 12 (2011): 2825-2830.
+6. Narkhede, Sarang. "Understanding auc-roc curve." Towards Data Science 26.1 (2018): 220-227.
+
+# Appendix
+
+The python and rmd code can be accessed from github respiratory link: https://github.com/wtguo1997/STA207_final_project
+
